@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>IDShield — Login (Phase 1 test page)</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        input { display: block; width: 100%; margin-bottom: 10px; padding: 8px; background: var(--panel); border: 1px solid var(--panel-border); color: var(--text); border-radius: 6px; }
+        button.lab-button { display: inline-block; }
+        pre { background: #060a13; padding: 12px; white-space: pre-wrap; border-radius: 8px; border: 1px solid var(--panel-border); }
+    </style>
+</head>
+<body>
+    <header class="app-header">
+        <h1>IDShield — Login (test page)</h1>
+        <nav>
+            <a href="/" class="active">Login (test)</a>
+            <a href="/dashboard">Dashboard</a>
+            <a href="/attack-lab">Attack Lab</a>
+            <a href="/docs">API Docs</a>
+        </nav>
+    </header>
+    <p class="type-tag">This is a bare-bones page for manually exercising the pipeline. The full
+       Attack Lab UI is at <a href="/attack-lab" style="color:var(--blue)">/attack-lab</a> —
+       or use the Swagger docs at <code>/docs</code> to fire test requests.</p>
+
+    <input id="username" placeholder="username">
+    <input id="password" type="password" placeholder="password">
+    <input id="source_ip" placeholder="source_ip (simulated)" value="203.0.113.9">
+    <input id="device_id" placeholder="device_id (simulated)" value="device-001">
+    <button onclick="doLogin()">Login</button>
+
+    <pre id="result"></pre>
+
+    <script>
+        async function doLogin() {
+            const body = {
+                username: document.getElementById('username').value,
+                password: document.getElementById('password').value,
+                source_ip: document.getElementById('source_ip').value,
+                device_id: document.getElementById('device_id').value,
+            };
+            const res = await fetch('/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const data = await res.json();
+            document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+        }
+    </script>
+</body>
+</html>

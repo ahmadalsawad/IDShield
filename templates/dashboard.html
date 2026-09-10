@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>IDShield — SOC Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header class="app-header">
+        <h1>🛡️ IDShield — SOC / Fraud Monitoring Dashboard</h1>
+        <nav>
+            <a href="/">Login (test)</a>
+            <a href="/dashboard" class="active">Dashboard</a>
+            <a href="/attack-lab">Attack Lab</a>
+            <a href="/docs">API Docs</a>
+        </nav>
+    </header>
+
+    <div class="stat-grid" id="stat-grid">
+        <!-- populated by JS -->
+    </div>
+
+    <table class="events" id="events-table">
+        <thead>
+            <tr>
+                <th>Type</th>
+                <th>Identity</th>
+                <th>Detail</th>
+                <th>Timestamp</th>
+                <th>Risk Score</th>
+                <th>Decision</th>
+            </tr>
+        </thead>
+        <tbody id="events-body">
+            <!-- populated by JS -->
+        </tbody>
+    </table>
+
+    <div id="evidence-panel">
+        <h3 id="evidence-title">Explain this decision</h3>
+        <div id="evidence-body"></div>
+    </div>
+
+    <script>
+        const REFRESH_MS = 4000;
+
+        function badge(decision) {
+            if (!decision) return '<span class="type-tag">n/a</span>';
+            return `<span class="badge ${decision}">${decision.replace('_', ' ')}</span>`;
+        }
+
+        async function loadSummary() {
+            const res = await fetch('/api/summary');
+            const data = await res.json();
+            const grid = document.getElementById('stat-grid');
+
+            const totals = { total: 0, allow: 0, step_up: 0, block: 0 };
+            for (const key of ['logins', 'registrations', 'documents', 'liveness_checks']) {
+                totals.total += data[key].total;
+                totals.allow += data[key].allow;
+                totals.step_up += data[key].step_up;
+                totals.block += data[key].block;
+            }
+
+            grid.innerHTML = `
+                <div class="stat-card"><div class="label">Total Events</div><div class="value">${totals.total}</div></div>
+                <div class="stat-card"><div class="label">Allowed</div><div class="value" style="color:var(--green)">${totals.allow}</div></div>
+                <div class="stat-card"><div class="label">Step-Up / Review</div><div class="value" style="color:var(--yellow)">${totals.step_up}</div></div>
+                <div class="stat-card"><div class="label">Blocked</div><div class="value" style="color:var(--red)">${totals.block}</div></div>
+                <div class="stat-card"><div class="label">Logins</div><div class="value">${data.logins.total}</div></div>
+                <div class="stat-card"><div class="label">Registrations</div><div class="value">${data.registrations.total}</div></div>
+                <div class="stat-card"><div class="label">Documents</div><div class="value">${data.documents.total}</div></div>
+                <div class="stat-card"><div class="label">Liveness Checks</div><div class="value">${data.liveness_checks.total}</div></div>
+            `;
+        }
+
+        async function loadEvents() {
+            const res = await fetch('/api/recent-events?limit=50');
+            const rows = await res.json();
+            const tbody = document.getElementById('events-body');
+            tbody.innerHTML = rows.map(r => `
+                <tr onclick="showEvidence('${r.type}', '${r.event_id}')">
+                    <td class="type-tag">${r.type}</td>
+                    <td>${r.identity}</td>
+                    <td class="type-tag">${r.detail}</td>
+                    <td>${new Date(r.timestamp).toLocaleString()}</td>
+                    <td>${r.risk_score !== null ? r.risk_score : '—'}</td>
+                    <td>${badge(r.decision)}</td>
+                </tr>
+            `).join('');
+        }
+
+        function endpointFor(type) {
+            if (type === 'login') return '/events/';
+            if (type === 'registration') return '/registrations/';
+            if (type === 'document') return '/documents/';
+            if (type === 'liveness') return '/liveness/';
+        }
+
+        async function showEvidence(type, eventId) {
+            const res = await fetch(endpointFor(type) + eventId);
+            const data = await res.json();
+
+            const panel = document.getElementById('evidence-panel');
+            const title = document.getElementById('evidence-title');
+            const body = document.getElementById('evidence-body');
+
+            title.textContent = `Explain this decision — ${type} — ${data.event_id}`;
+
+            let html = `<p><strong>Risk score:</strong> ${data.risk_score ?? '—'} &nbsp; ${badge(data.decision)}</p>`;
+
+            for (const det of data.detector_results) {
+                html += `
+                    <div class="detector-block ${det.triggered ? '' : 'not-triggered'}">
+                        <div class="detector-header">
+                            <span>${det.detector} (v${det.detector_version})</span>
+                            <span>${det.triggered ? '⚠ TRIGGERED' : 'not triggered'} — score ${det.score} (confidence ${det.confidence})</span>
+                        </div>
+                        ${det.evidence.length === 0 ? '<div class="type-tag">No evidence — nothing anomalous found.</div>' :
+                          det.evidence.map(ev => `
+                            <div class="evidence-item">
+                                <span>${ev.label}</span>
+                                <span class="contribution">+${ev.contribution}</span>
+                            </div>
+                          `).join('')}
+                    </div>
+                `;
+            }
+
+            body.innerHTML = html;
+            panel.classList.add('open');
+            panel.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        async function refresh() {
+            await Promise.all([loadSummary(), loadEvents()]);
+        }
+
+        refresh();
+        setInterval(refresh, REFRESH_MS);
+    </script>
+</body>
+</html>

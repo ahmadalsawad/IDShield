@@ -1,0 +1,9 @@
+venv/
+__pycache__/
+*.pyc
+data/idshield.db
+data/idshield.db-wal
+data/idshield.db-shm
+uploads/*
+!uploads/.gitkeep
+.DS_Store
