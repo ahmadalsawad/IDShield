@@ -2,51 +2,308 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>IDShield — Login (Phase 1 test page)</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <title>IDShield — Digital Identity Portal</title>
     <style>
-        input { display: block; width: 100%; margin-bottom: 10px; padding: 8px; background: var(--panel); border: 1px solid var(--panel-border); color: var(--text); border-radius: 6px; }
-        button.lab-button { display: inline-block; }
-        pre { background: #060a13; padding: 12px; white-space: pre-wrap; border-radius: 8px; border: 1px solid var(--panel-border); }
+        :root {
+            --gov-blue: #0f4c9c;
+            --gov-blue-dark: #0a3a7a;
+            --gov-blue-light: #eaf1fb;
+            --gov-bg: #f4f7fb;
+            --gov-text: #1a2433;
+            --gov-text-dim: #5c6b80;
+            --gov-border: #dbe4f0;
+            --green: #1a9e5c;
+            --yellow: #b8860b;
+            --red: #c62828;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+            background: linear-gradient(180deg, var(--gov-bg) 0%, #e9eff8 100%);
+            color: var(--gov-text);
+            min-height: 100vh;
+        }
+        header.portal-header {
+            background: #ffffff;
+            border-bottom: 1px solid var(--gov-border);
+            padding: 16px 32px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .brand { display: flex; align-items: center; gap: 12px; }
+        .brand .shield {
+            width: 40px; height: 40px;
+            background: var(--gov-blue);
+            border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 22px;
+            color: white;
+        }
+        .brand .wordmark { font-size: 1.3rem; font-weight: 700; color: var(--gov-blue-dark); }
+        .brand .tagline { font-size: 0.72rem; color: var(--gov-text-dim); letter-spacing: 0.04em; text-transform: uppercase; }
+        nav.internal-links { display: flex; gap: 18px; }
+        nav.internal-links a {
+            font-size: 0.82rem;
+            color: var(--gov-text-dim);
+            text-decoration: none;
+            border: 1px solid var(--gov-border);
+            padding: 6px 12px;
+            border-radius: 6px;
+        }
+        nav.internal-links a:hover { border-color: var(--gov-blue); color: var(--gov-blue); }
+
+        main {
+            max-width: 480px;
+            margin: 48px auto;
+            padding: 0 20px;
+        }
+
+        .portal-intro { text-align: center; margin-bottom: 24px; }
+        .portal-intro h1 { font-size: 1.5rem; margin-bottom: 6px; color: var(--gov-blue-dark); }
+        .portal-intro p { color: var(--gov-text-dim); font-size: 0.9rem; margin: 0; }
+
+        .card {
+            background: #ffffff;
+            border: 1px solid var(--gov-border);
+            border-radius: 14px;
+            box-shadow: 0 4px 24px rgba(15, 76, 156, 0.06);
+            overflow: hidden;
+        }
+
+        .tabs { display: flex; border-bottom: 1px solid var(--gov-border); }
+        .tab {
+            flex: 1;
+            text-align: center;
+            padding: 14px;
+            font-size: 0.92rem;
+            font-weight: 600;
+            color: var(--gov-text-dim);
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+        }
+        .tab.active { color: var(--gov-blue); border-bottom-color: var(--gov-blue); }
+
+        .tab-panel { display: none; padding: 26px; }
+        .tab-panel.active { display: block; }
+
+        label { display: block; font-size: 0.8rem; color: var(--gov-text-dim); margin-bottom: 4px; margin-top: 14px; }
+        label:first-child { margin-top: 0; }
+        input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--gov-border);
+            border-radius: 8px;
+            font-size: 0.92rem;
+            background: #fbfcfe;
+            color: var(--gov-text);
+        }
+        input:focus { outline: none; border-color: var(--gov-blue); background: #fff; }
+
+        button.primary {
+            width: 100%;
+            margin-top: 20px;
+            padding: 12px;
+            background: var(--gov-blue);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        button.primary:hover { background: var(--gov-blue-dark); }
+
+        details.advanced {
+            margin-top: 16px;
+            border: 1px dashed var(--gov-border);
+            border-radius: 8px;
+            padding: 10px 12px;
+        }
+        details.advanced summary {
+            font-size: 0.78rem;
+            color: var(--gov-text-dim);
+            cursor: pointer;
+        }
+        details.advanced .advanced-body { margin-top: 10px; }
+
+        #result-panel { margin-top: 20px; display: none; }
+        #result-panel.open { display: block; }
+        .decision-banner {
+            padding: 14px 16px;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 0.95rem;
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .decision-banner.ALLOW { background: rgba(26,158,92,0.12); color: var(--green); }
+        .decision-banner.STEP_UP { background: rgba(184,134,11,0.12); color: var(--yellow); }
+        .decision-banner.BLOCK { background: rgba(198,40,40,0.12); color: var(--red); }
+
+        .evidence-row {
+            display: flex; justify-content: space-between;
+            font-size: 0.85rem;
+            padding: 7px 0;
+            border-bottom: 1px solid var(--gov-border);
+            color: var(--gov-text-dim);
+        }
+        .evidence-row:last-child { border-bottom: none; }
+        .evidence-row .pts { color: var(--gov-blue); font-weight: 600; }
+
+        .footer-note { text-align: center; margin-top: 24px; font-size: 0.75rem; color: var(--gov-text-dim); }
     </style>
 </head>
 <body>
-    <header class="app-header">
-        <h1>IDShield — Login (test page)</h1>
-        <nav>
-            <a href="/" class="active">Login (test)</a>
-            <a href="/dashboard">Dashboard</a>
+    <header class="portal-header">
+        <div class="brand">
+            <div class="shield">🛡️</div>
+            <div>
+                <div class="wordmark">IDShield</div>
+                <div class="tagline">Trust Identities. Secure Tomorrow.</div>
+            </div>
+        </div>
+        <nav class="internal-links">
+            <a href="/dashboard">SOC Dashboard</a>
             <a href="/attack-lab">Attack Lab</a>
             <a href="/docs">API Docs</a>
         </nav>
     </header>
-    <p class="type-tag">This is a bare-bones page for manually exercising the pipeline. The full
-       Attack Lab UI is at <a href="/attack-lab" style="color:var(--blue)">/attack-lab</a> —
-       or use the Swagger docs at <code>/docs</code> to fire test requests.</p>
 
-    <input id="username" placeholder="username">
-    <input id="password" type="password" placeholder="password">
-    <input id="source_ip" placeholder="source_ip (simulated)" value="203.0.113.9">
-    <input id="device_id" placeholder="device_id (simulated)" value="device-001">
-    <button onclick="doLogin()">Login</button>
+    <main>
+        <div class="portal-intro">
+            <h1>Digital Identity Portal</h1>
+            <p>Mock government citizen portal — sign in or register a new identity.</p>
+        </div>
 
-    <pre id="result"></pre>
+        <div class="card">
+            <div class="tabs">
+                <div class="tab active" onclick="switchTab('login')">Sign In</div>
+                <div class="tab" onclick="switchTab('register')">Create Account</div>
+            </div>
+
+            <div class="tab-panel active" id="panel-login">
+                <label>Username</label>
+                <input id="login-username" placeholder="e.g. fatima.alsuwaidi">
+                <label>Password</label>
+                <input id="login-password" type="password" placeholder="••••••••">
+
+                <details class="advanced">
+                    <summary>Simulation settings (source IP, device, location) — demo only</summary>
+                    <div class="advanced-body">
+                        <label>Source IP (simulated)</label>
+                        <input id="login-ip" value="203.0.113.9">
+                        <label>Device ID (simulated)</label>
+                        <input id="login-device" value="device-001">
+                        <label>Latitude (optional)</label>
+                        <input id="login-lat" placeholder="e.g. 25.2048">
+                        <label>Longitude (optional)</label>
+                        <input id="login-lon" placeholder="e.g. 55.2708">
+                    </div>
+                </details>
+
+                <button class="primary" onclick="doLogin()">Sign In</button>
+            </div>
+
+            <div class="tab-panel" id="panel-register">
+                <label>Username</label>
+                <input id="reg-username" placeholder="choose a username">
+                <label>Password</label>
+                <input id="reg-password" type="password" placeholder="min. 8 characters">
+                <label>Full Name (optional)</label>
+                <input id="reg-fullname" placeholder="e.g. Fatima Al Suwaidi">
+                <label>Phone Number (optional)</label>
+                <input id="reg-phone" placeholder="e.g. +971-50-1234567">
+                <label>Document Number (optional)</label>
+                <input id="reg-docnumber" placeholder="e.g. IDN-88213940">
+
+                <button class="primary" onclick="doRegister()">Create Account</button>
+            </div>
+
+            <div style="padding: 0 26px 26px;">
+                <div id="result-panel"></div>
+            </div>
+        </div>
+
+        <p class="footer-note">This is a research prototype simulating a government digital-identity system. No real citizen data is used anywhere.</p>
+    </main>
 
     <script>
+        function switchTab(name) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+            document.querySelector(`.tab:nth-child(${name === 'login' ? 1 : 2})`).classList.add('active');
+            document.getElementById('panel-' + name).classList.add('active');
+            document.getElementById('result-panel').classList.remove('open');
+        }
+
+        function renderResult(data, decisionKey, riskKey, detectorResultsKey) {
+            const panel = document.getElementById('result-panel');
+            const decision = data[decisionKey];
+            const risk = data[riskKey];
+            const results = data[detectorResultsKey] || [];
+
+            let html = `<div class="decision-banner ${decision}"><span>Decision: ${decision ? decision.replace('_',' ') : 'N/A'}</span><span>Risk: ${risk ?? '—'}</span></div>`;
+
+            for (const det of results) {
+                if (!det.evidence || det.evidence.length === 0) continue;
+                html += `<div style="font-size:0.8rem; font-weight:600; margin-top:8px; color:var(--gov-text-dim);">${det.detector}</div>`;
+                for (const ev of det.evidence) {
+                    html += `<div class="evidence-row"><span>${ev.label}</span><span class="pts">+${ev.contribution}</span></div>`;
+                }
+            }
+            if (results.every(d => !d.evidence || d.evidence.length === 0)) {
+                html += `<div class="evidence-row"><span>No anomalies found — clean result.</span></div>`;
+            }
+
+            panel.innerHTML = html;
+            panel.classList.add('open');
+        }
+
         async function doLogin() {
             const body = {
-                username: document.getElementById('username').value,
-                password: document.getElementById('password').value,
-                source_ip: document.getElementById('source_ip').value,
-                device_id: document.getElementById('device_id').value,
+                username: document.getElementById('login-username').value,
+                password: document.getElementById('login-password').value,
+                source_ip: document.getElementById('login-ip').value || '203.0.113.9',
+                device_id: document.getElementById('login-device').value || 'device-001',
             };
+            const lat = document.getElementById('login-lat').value;
+            const lon = document.getElementById('login-lon').value;
+            if (lat) body.latitude = parseFloat(lat);
+            if (lon) body.longitude = parseFloat(lon);
+
             const res = await fetch('/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
             });
             const data = await res.json();
-            document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+            renderResult(data, 'decision', 'risk_score', 'detector_results');
+        }
+
+        async function doRegister() {
+            const body = {
+                username: document.getElementById('reg-username').value,
+                password: document.getElementById('reg-password').value,
+                full_name: document.getElementById('reg-fullname').value || undefined,
+                phone_number: document.getElementById('reg-phone').value || undefined,
+                document_number: document.getElementById('reg-docnumber').value || undefined,
+            };
+            const res = await fetch('/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const data = await res.json();
+            if (data.detail) {
+                document.getElementById('result-panel').innerHTML = `<div class="decision-banner BLOCK"><span>${data.detail}</span></div>`;
+                document.getElementById('result-panel').classList.add('open');
+                return;
+            }
+            renderResult(data, 'identity_decision', 'identity_risk_score', 'detector_results');
         }
     </script>
 </body>
