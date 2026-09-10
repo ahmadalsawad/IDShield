@@ -20,6 +20,11 @@
         <!-- populated by JS -->
     </div>
 
+    <div id="decision-bar-wrap" style="margin-bottom:24px;">
+        <div class="type-tag" style="margin-bottom:6px;">Decision breakdown</div>
+        <div id="decision-bar" style="display:flex; height:22px; border-radius:6px; overflow:hidden; border:1px solid var(--panel-border);"></div>
+    </div>
+
     <table class="events" id="events-table">
         <thead>
             <tr>
@@ -67,12 +72,23 @@
                 <div class="stat-card"><div class="label">Allowed</div><div class="value" style="color:var(--green)">${totals.allow}</div></div>
                 <div class="stat-card"><div class="label">Step-Up / Review</div><div class="value" style="color:var(--yellow)">${totals.step_up}</div></div>
                 <div class="stat-card"><div class="label">Blocked</div><div class="value" style="color:var(--red)">${totals.block}</div></div>
-                <div class="stat-card"><div class="label">Logins</div><div class="value">${data.logins.total}</div></div>
-                <div class="stat-card"><div class="label">Registrations</div><div class="value">${data.registrations.total}</div></div>
-                <div class="stat-card"><div class="label">Documents</div><div class="value">${data.documents.total}</div></div>
-                <div class="stat-card"><div class="label">Liveness Checks</div><div class="value">${data.liveness_checks.total}</div></div>
+                <div class="stat-card"><div class="label">🔑 Logins</div><div class="value">${data.logins.total}</div></div>
+                <div class="stat-card"><div class="label">📝 Registrations</div><div class="value">${data.registrations.total}</div></div>
+                <div class="stat-card"><div class="label">📄 Documents</div><div class="value">${data.documents.total}</div></div>
+                <div class="stat-card"><div class="label">🪪 Liveness Checks</div><div class="value">${data.liveness_checks.total}</div></div>
             `;
+
+            const bar = document.getElementById('decision-bar');
+            const pct = (n) => totals.total ? (100 * n / totals.total) : 0;
+            const seg = (n, color, label) => n > 0
+                ? `<div title="${label}: ${n}" style="width:${pct(n)}%; background:${color}; min-width:2px;"></div>`
+                : '';
+            bar.innerHTML = seg(totals.allow, 'var(--green)', 'Allowed')
+                + seg(totals.step_up, 'var(--yellow)', 'Step-Up')
+                + seg(totals.block, 'var(--red)', 'Blocked');
         }
+
+        const TYPE_ICONS = { login: '🔑', registration: '📝', document: '📄', liveness: '🪪' };
 
         async function loadEvents() {
             const res = await fetch('/api/recent-events?limit=50');
@@ -80,7 +96,7 @@
             const tbody = document.getElementById('events-body');
             tbody.innerHTML = rows.map(r => `
                 <tr onclick="showEvidence('${r.type}', '${r.event_id}')">
-                    <td class="type-tag">${r.type}</td>
+                    <td class="type-tag">${TYPE_ICONS[r.type] || ''} ${r.type}</td>
                     <td>${r.identity}</td>
                     <td class="type-tag">${r.detail}</td>
                     <td>${new Date(r.timestamp).toLocaleString()}</td>
