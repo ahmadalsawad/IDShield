@@ -240,13 +240,25 @@
             document.getElementById('result-panel').classList.remove('open');
         }
 
-        function renderResult(data, decisionKey, riskKey, detectorResultsKey) {
+        function renderResult(data, decisionKey, riskKey, detectorResultsKey, authResultKey) {
             const panel = document.getElementById('result-panel');
             const decision = data[decisionKey];
             const risk = data[riskKey];
             const results = data[detectorResultsKey] || [];
 
-            let html = `<div class="decision-banner ${decision}"><span>Decision: ${decision ? decision.replace('_',' ') : 'N/A'}</span><span>Risk: ${risk ?? '—'}</span></div>`;
+            let html = '';
+
+            // Authentication result (was the password actually correct?) is
+            // a SEPARATE concern from fraud risk — shown as its own banner
+            // so it's never confused with the risk decision below it.
+            if (authResultKey && data[authResultKey] !== undefined) {
+                const authOk = data[authResultKey];
+                html += `<div class="decision-banner ${authOk ? 'ALLOW' : 'BLOCK'}" style="margin-bottom:8px;">
+                    <span>${authOk ? 'Authentication: correct username/password' : 'Authentication: incorrect username or password'}</span>
+                </div>`;
+            }
+
+            html += `<div class="decision-banner ${decision}"><span>Fraud risk decision: ${decision ? decision.replace('_',' ') : 'N/A'}</span><span>Risk: ${risk ?? '—'}</span></div>`;
 
             for (const det of results) {
                 if (!det.evidence || det.evidence.length === 0) continue;
@@ -281,7 +293,7 @@
                 body: JSON.stringify(body),
             });
             const data = await res.json();
-            renderResult(data, 'decision', 'risk_score', 'detector_results');
+            renderResult(data, 'decision', 'risk_score', 'detector_results', 'password_correct');
         }
 
         async function doRegister() {
