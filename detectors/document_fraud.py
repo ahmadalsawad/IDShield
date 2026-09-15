@@ -44,13 +44,16 @@ exactly the kind of unsupported claim the brief warns against.
 """
 
 DETECTOR_NAME = "document_fraud"
-DETECTOR_VERSION = "0.2.0"
+DETECTOR_VERSION = "0.3.0"
 
 POINTS_DUPLICATE_HASH = 45
 POINTS_NAME_MISMATCH = 25
 POINTS_DOCUMENT_NUMBER_MISMATCH = 30
 POINTS_FILE_INTEGRITY = 15
 POINTS_EDITING_SOFTWARE_METADATA = 15
+POINTS_PERCEPTUAL_NEAR_DUPLICATE = 35
+
+PERCEPTUAL_HAMMING_THRESHOLD = 8  # out of 64 bits; distance this low means visually near-identical
 
 TRIGGER_THRESHOLD = 20
 
@@ -78,15 +81,30 @@ def _matches_editing_software(exif_software: str | None) -> bool:
     return any(sig in lowered for sig in EDITING_SOFTWARE_SIGNATURES)
 
 
+def _hamming_distance(hash1: str | None, hash2: str | None) -> int:
+    """Bit-distance between two hex-encoded perceptual hashes. Returns 64
+    (maximally different) if either hash is missing or unparseable, so a
+    missing hash never accidentally counts as a match."""
+    if not hash1 or not hash2:
+        return 64
+    try:
+        return bin(int(hash1, 16) ^ int(hash2, 16)).count("1")
+    except ValueError:
+        return 64
+
+
 def analyze(candidate: dict, prior_uploads: list[dict], registry_record: dict | None) -> dict:
     """
     candidate: dict with keys:
         file_hash (str), file_size_bytes (int), is_valid_image (bool),
         declared_full_name (str|None), declared_document_number (str|None),
-        username (str), exif_software (str|None, optional) — the raw EXIF
-        "Software" tag value if present, or None if absent/unreadable.
-    prior_uploads: list of dicts, each with keys: file_hash, username
-        (every OTHER previously uploaded document, any user)
+        username (str), exif_software (str|None, optional), perceptual_hash
+        (str|None, optional) — a 64-bit average-hash fingerprint of the
+        image's visual content (see app.py's _compute_perceptual_hash),
+        None if the file couldn't be read as an image.
+    prior_uploads: list of dicts, each with keys: file_hash, username,
+        perceptual_hash (optional) — every OTHER previously uploaded
+        document, any user.
     registry_record: dict with keys full_name, document_number for the
         username on this candidate, or None if that username isn't
         registered / hasn't supplied those fields.
@@ -111,6 +129,33 @@ def analyze(candidate: dict, prior_uploads: list[dict], registry_record: dict | 
             "contribution": POINTS_DUPLICATE_HASH,
         })
         total_score += POINTS_DUPLICATE_HASH
+    elif candidate.get("perceptual_hash"):
+        # Only checked when the exact hash DIDN'T already match — this is
+        # specifically for the case a same-hash check cannot catch: the
+        # same underlying image, re-saved/re-compressed/resized so its raw
+        # bytes (and therefore SHA-256) differ completely, but it still
+        # looks the same. A well-established computer-vision technique
+        # (average hashing), not a forensic tampering claim.
+        near_dupes = [
+            (u["username"], _hamming_distance(candidate["perceptual_hash"], u.get("perceptual_hash")))
+            for u in prior_uploads
+            if u["username"] != candidate["username"]
+        ]
+        near_dupes = [(uname, dist) for uname, dist in near_dupes if dist <= PERCEPTUAL_HAMMING_THRESHOLD]
+        if near_dupes:
+            best_username, best_dist = min(near_dupes, key=lambda x: x[1])
+            evidence.append({
+                "label": (
+                    f"TAMPERING INDICATOR: visually near-identical document "
+                    f"(perceptual hash distance {best_dist}/64 bits) previously "
+                    f"submitted under a different account ('{best_username}') — "
+                    f"consistent with the same file re-saved or re-compressed, "
+                    f"not a byte-for-byte copy"
+                ),
+                "value": {"username": best_username, "hamming_distance": best_dist},
+                "contribution": POINTS_PERCEPTUAL_NEAR_DUPLICATE,
+            })
+            total_score += POINTS_PERCEPTUAL_NEAR_DUPLICATE
 
     if registry_record:
         if candidate.get("declared_full_name") and registry_record.get("full_name"):
@@ -192,13 +237,19 @@ def run(db, document_upload) -> dict:
         .filter(DocumentUpload.id != document_upload.id)
         .all()
     )
-    prior_uploads = [{"file_hash": r.file_hash_sha256, "username": r.username_submitted} for r in prior_rows]
+    prior_uploads = [
+        {"file_hash": r.file_hash_sha256, "username": r.username_submitted, "perceptual_hash": r.perceptual_hash}
+        for r in prior_rows
+    ]
 
     registry_record = None
     if document_upload.user_id is not None:
         user = db.query(User).filter(User.id == document_upload.user_id).first()
         if user:
             registry_record = {"full_name": user.full_name, "document_number": user.document_number}
+
+    perceptual_hash = getattr(document_upload, "_perceptual_hash", None)
+    document_upload.perceptual_hash = perceptual_hash  # persist for future comparisons
 
     candidate = {
         "file_hash": document_upload.file_hash_sha256,
@@ -208,6 +259,7 @@ def run(db, document_upload) -> dict:
         "declared_document_number": document_upload.declared_document_number,
         "username": document_upload.username_submitted,
         "exif_software": getattr(document_upload, "_exif_software", None),
+        "perceptual_hash": perceptual_hash,
     }
 
     return analyze(candidate, prior_uploads, registry_record)
@@ -265,5 +317,58 @@ if __name__ == "__main__":
     print(json.dumps(edited_result, indent=2))
     assert edited_result["triggered"] is False  # weak signal alone (15 pts) stays below the 20-point threshold, by design
     assert any("METADATA INDICATOR" in e["label"] for e in edited_result["evidence"])
+
+    # New: perceptual hash — the actual case SHA-256 alone cannot catch.
+    # Generate a real image, hash it, re-save it at a different JPEG
+    # quality (changing every byte and therefore the SHA-256), and verify
+    # the perceptual hash still recognizes it as the same image.
+    import io as _io
+    from PIL import Image as _Image
+
+    def _fake_document_bytes(quality):
+        img = _Image.new("RGB", (400, 300), color=(120, 140, 160))
+        # A few shapes so the image isn't a flat, trivially-hashable block.
+        for x in range(0, 400, 40):
+            for y in range(0, 300, 40):
+                if (x + y) % 80 == 0:
+                    img.putpixel((x, y), (200, 50, 50))
+        buf = _io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality)
+        return buf.getvalue()
+
+    def _ahash(raw_bytes):
+        img = _Image.open(_io.BytesIO(raw_bytes)).convert("L").resize((8, 8), _Image.LANCZOS)
+        pixels = list(img.getdata())
+        avg = sum(pixels) / len(pixels)
+        bits = "".join("1" if p >= avg else "0" for p in pixels)
+        return f"{int(bits, 2):016x}"
+
+    original_bytes = _fake_document_bytes(quality=95)
+    recompressed_bytes = _fake_document_bytes(quality=40)  # same image, heavily re-compressed
+
+    original_sha256 = hashlib_sha256 = __import__("hashlib").sha256(original_bytes).hexdigest()
+    recompressed_sha256 = __import__("hashlib").sha256(recompressed_bytes).hexdigest()
+    assert original_sha256 != recompressed_sha256, "Test setup check: re-compression should change SHA-256"
+
+    original_phash = _ahash(original_bytes)
+    recompressed_phash = _ahash(recompressed_bytes)
+    dist = _hamming_distance(original_phash, recompressed_phash)
+    print(f"\nPerceptual hash test: SHA-256 differs (as expected), Hamming distance = {dist}/64")
+
+    prior_with_phash = [{"file_hash": original_sha256, "username": "real_owner", "perceptual_hash": original_phash}]
+    reencoded_candidate = {
+        "file_hash": recompressed_sha256,  # DIFFERENT from original — SHA-256 alone would miss this
+        "file_size_bytes": len(recompressed_bytes),
+        "is_valid_image": True,
+        "declared_full_name": "Different Person",
+        "declared_document_number": "IDN-99999999",
+        "username": "thief_account",
+        "perceptual_hash": recompressed_phash,
+    }
+    phash_result = analyze(reencoded_candidate, prior_with_phash, None)
+    print(json.dumps(phash_result, indent=2))
+    assert dist <= PERCEPTUAL_HAMMING_THRESHOLD, f"Expected near-identical hash, got distance {dist}"
+    assert phash_result["triggered"] is True
+    assert any("visually near-identical" in e["label"] for e in phash_result["evidence"])
 
     print("\nAll self-tests passed.")
