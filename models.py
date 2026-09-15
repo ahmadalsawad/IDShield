@@ -13,6 +13,19 @@ need to function end to end:
   wide table) because Phase 3+ will add more detectors, and the SOC
   dashboard's "Explain this decision" view needs to list every detector's
   individual evidence, not just the final score.
+
+REVISION NOTE — tamper-evident audit chain (see audit_chain.py): every
+*DetectorResult table below gets a nullable `chain_hash` column. Each row
+hashes together its own tamper-relevant fields (detector_name,
+detector_version, triggered, score, confidence, evidence_json) with the
+PREVIOUS row's chain_hash in that same table, forming an append-only hash
+chain per table. This makes the "Explain this decision" audit trail
+tamper-EVIDENT: editing or deleting a past evidence row after the fact
+breaks the chain from that point forward, and audit_chain.verify_chain()
+detects exactly where. It is not a distributed ledger and doesn't claim
+to be one — see audit_chain.py's docstring for the honest scoping,
+including how this relates to (and differs from) UAE PASS's blockchain-
+backed Digital Vault.
 """
 
 import uuid
@@ -121,6 +134,12 @@ class DetectorResult(Base):
     # json.loads() this when reading it back.
     evidence_json = Column(Text, nullable=False)
 
+    # Tamper-evident hash chain (see audit_chain.py). Nullable so existing
+    # rows from before this revision don't need a backfill to keep working;
+    # audit_chain.verify_chain() simply starts checking from the first row
+    # that has one.
+    chain_hash = Column(String, nullable=True, index=True)
+
     created_at = Column(DateTime, default=_now)
 
     auth_event = relationship("AuthEvent", back_populates="detector_results")
@@ -161,6 +180,7 @@ class IdentityDetectorResult(Base):
     score = Column(Float, nullable=False)
     confidence = Column(Float, nullable=False)
     evidence_json = Column(Text, nullable=False)
+    chain_hash = Column(String, nullable=True, index=True)
 
     created_at = Column(DateTime, default=_now)
 
@@ -222,6 +242,7 @@ class DocumentDetectorResult(Base):
     score = Column(Float, nullable=False)
     confidence = Column(Float, nullable=False)
     evidence_json = Column(Text, nullable=False)
+    chain_hash = Column(String, nullable=True, index=True)
 
     created_at = Column(DateTime, default=_now)
 
@@ -274,6 +295,7 @@ class LivenessDetectorResult(Base):
     score = Column(Float, nullable=False)
     confidence = Column(Float, nullable=False)
     evidence_json = Column(Text, nullable=False)
+    chain_hash = Column(String, nullable=True, index=True)
 
     created_at = Column(DateTime, default=_now)
 
