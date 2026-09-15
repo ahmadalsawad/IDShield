@@ -452,6 +452,47 @@ def eval_perceptual_hash(rng, n_legit=200, n_attacks=50):
     return confusion_metrics(tp, fp, tn, fn), len(events)
 
 
+# ============================================================
+# THRESHOLD SENSITIVITY (added in this revision)
+# ============================================================
+# Not a substitute for cost-sensitive tuning against real incident costs
+# (which this prototype has no data for), but a check that the current
+# risk-engine cutoffs (0-29/30-69/70+) are not arbitrary: representative
+# real single-detector trigger scores are replayed against two alternate
+# cutoff sets, showing the two near-definitive signals (severe credential
+# stuffing; a lone duplicated national ID) reach BLOCK under the current
+# set and the aggressive set, while device-farm and document-reuse
+# consistently land in STEP-UP for human review across all three.
+def _decide(score, allow_max, stepup_max):
+    if score <= allow_max:
+        return "ALLOW"
+    if score <= stepup_max:
+        return "STEP-UP"
+    return "BLOCK"
+
+
+def eval_threshold_sensitivity():
+    scenarios = [
+        ("Credential stuffing, severe (47 attempts/60s, 31 accounts, 45 fails, 1 device)", 75),
+        ("Device anomaly, 12-account device farm (post-fix)", 30),
+        ("Document forgery, exact duplicate hash", 45),
+        ("Synthetic identity, lone duplicate national ID (post-fix)", 75),
+    ]
+    cutoff_sets = {
+        "Current (0-29/30-69/70+)": (29, 69),
+        "Set A: wider (0-34/35-79/80+)": (34, 79),
+        "Set B: aggressive (0-19/20-59/60+)": (19, 59),
+    }
+    print("=== Threshold sensitivity ===")
+    for label, score in scenarios:
+        row = " | ".join(
+            f"{name}: {_decide(score, allow_max, stepup_max)}"
+            for name, (allow_max, stepup_max) in cutoff_sets.items()
+        )
+        print(f"  {label} (score={score})\n    {row}")
+    print()
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
@@ -482,3 +523,6 @@ if __name__ == "__main__":
     print(f"{'Detector':<20} {'Precision':<10} {'Recall':<10} {'F1':<10} {'FPR':<10}")
     for name, m in results.items():
         print(f"{name:<20} {m['precision']:<10} {m['recall']:<10} {m['f1']:<10} {m['fpr']:<10}")
+
+    print()
+    eval_threshold_sensitivity()
