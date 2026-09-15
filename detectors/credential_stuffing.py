@@ -26,7 +26,7 @@ tuned against the Phase 8 labeled dataset).
 from datetime import timedelta
 
 DETECTOR_NAME = "credential_stuffing"
-DETECTOR_VERSION = "0.1.0"
+DETECTOR_VERSION = "0.2.0"
 
 WINDOW_SECONDS = 60
 
@@ -36,6 +36,21 @@ UNIQUE_USERNAME_THRESHOLDS = [(25, 20), (10, 12), (5, 6)]      # (unique usernam
 FAILURE_RATE_THRESHOLDS = [(0.8, 15), (0.5, 8)]                # (failure ratio, points)
 SINGLE_DEVICE_MIN_ATTEMPTS = 10
 SINGLE_DEVICE_POINTS = 10
+
+# IP reputation, honestly scoped: we have no live threat-intelligence feed
+# (no internet access, and no legitimate one exists for a prototype), so
+# rather than fabricate a "reputation score," we flag traffic from IP
+# ranges reserved by RFC 5737 for documentation/testing use only — these
+# should NEVER appear in real production traffic, so seeing one genuinely
+# is an anomaly signal, not an invented one. Scoped to the two ranges we
+# have used consistently for simulated attacker traffic throughout this
+# project (192.0.2.0/24, 198.51.100.0/24); 203.0.113.0/24 is deliberately
+# excluded since it has also been used as a generic default/placeholder
+# value elsewhere (e.g. the citizen portal's default IP field) and
+# flagging it here would retroactively mislabel that legitimate-looking
+# traffic.
+REPUTATION_FLAGGED_PREFIXES = ("192.0.2.", "198.51.100.")
+REPUTATION_FLAG_POINTS = 10
 
 TRIGGER_THRESHOLD = 20  # detector reports triggered=True at/above this score
 
@@ -106,6 +121,21 @@ def analyze(events: list[dict], now) -> dict:
             "contribution": SINGLE_DEVICE_POINTS,
         })
         total_score += SINGLE_DEVICE_POINTS
+
+    # IP reputation: check the CURRENT event's own source IP (not any IP
+    # that happens to appear in the window's history) against the
+    # documentation-range list above. See the module-level comment for
+    # why this stays honestly scoped rather than claiming a real feed.
+    current_matches = [e for e in recent if e["timestamp"] == now]
+    current_ip = current_matches[0]["source_ip"] if current_matches else None
+    if current_ip and any(current_ip.startswith(p) for p in REPUTATION_FLAGGED_PREFIXES):
+        evidence.append({
+            "label": f"Source IP {current_ip} falls within a reputation-flagged range "
+                     f"(reserved documentation/test range — never expected in real traffic)",
+            "value": current_ip,
+            "contribution": REPUTATION_FLAG_POINTS,
+        })
+        total_score += REPUTATION_FLAG_POINTS
 
     total_score = min(total_score, 100.0)
 
@@ -184,4 +214,27 @@ if __name__ == "__main__":
 
     assert result["triggered"] is True, "Expected this scenario to trigger"
     assert result["score"] >= 70, f"Expected high score, got {result['score']}"
-    print("\nSelf-test passed.")
+
+    # New: IP reputation signal, tested in isolation. A single legitimate
+    # login from a flagged documentation-range IP should get the weak
+    # +10 signal but NOT trigger alone; the same single login from a
+    # normal private IP should get nothing.
+    single_event_flagged_ip = [{
+        "username": "citizen1", "source_ip": "198.51.100.9", "device_id": "device-1",
+        "success": True, "timestamp": base_time,
+    }]
+    flagged_result = analyze(single_event_flagged_ip, now=base_time)
+    print("\nSingle legit-looking login from a flagged IP range:")
+    print(json.dumps(flagged_result, indent=2))
+    assert flagged_result["triggered"] is False
+    assert flagged_result["score"] == REPUTATION_FLAG_POINTS
+    assert any("reputation-flagged" in e["label"] for e in flagged_result["evidence"])
+
+    single_event_normal_ip = [{
+        "username": "citizen1", "source_ip": "10.0.0.5", "device_id": "device-1",
+        "success": True, "timestamp": base_time,
+    }]
+    normal_result = analyze(single_event_normal_ip, now=base_time)
+    assert normal_result["score"] == 0.0
+
+    print("\nAll self-tests passed.")
