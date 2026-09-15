@@ -135,7 +135,7 @@
                 html += `
                     <div class="detector-block ${det.triggered ? '' : 'not-triggered'}">
                         <div class="detector-header">
-                            <span>${det.detector} (v${det.detector_version})</span>
+                            <span>${det.detector} (v${det.detector_version})${det.id !== undefined ? ` — row #${det.id}` : ''}</span>
                             <span>${det.triggered ? '⚠ TRIGGERED' : 'not triggered'} — score ${det.score} (confidence ${det.confidence})</span>
                         </div>
                         ${det.evidence.length === 0 ? '<div class="type-tag">No evidence — nothing anomalous found.</div>' :
