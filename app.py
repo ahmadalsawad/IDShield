@@ -306,6 +306,7 @@ def explain_event(event_id: str, db: Session = Depends(get_db)):
         "decision": event.decision,
         "detector_results": [
             {
+                "id": r.id,
                 "detector": r.detector_name,
                 "detector_version": r.detector_version,
                 "triggered": r.triggered,
@@ -342,6 +343,7 @@ def explain_registration(event_id: str, db: Session = Depends(get_db)):
         "decision": reg_event.decision,
         "detector_results": [
             {
+                "id": r.id,
                 "detector": r.detector_name,
                 "detector_version": r.detector_version,
                 "triggered": r.triggered,
@@ -493,6 +495,7 @@ def explain_document(event_id: str, db: Session = Depends(get_db)):
         "decision": doc.decision,
         "detector_results": [
             {
+                "id": r.id,
                 "detector": r.detector_name,
                 "detector_version": r.detector_version,
                 "triggered": r.triggered,
@@ -592,6 +595,7 @@ def explain_liveness(event_id: str, db: Session = Depends(get_db)):
         "decision": check.decision,
         "detector_results": [
             {
+                "id": r.id,
                 "detector": r.detector_name,
                 "detector_version": r.detector_version,
                 "triggered": r.triggered,
