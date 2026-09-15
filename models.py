@@ -191,6 +191,14 @@ class DocumentUpload(Base):
     file_hash_sha256 = Column(String, nullable=False, index=True)
     file_size_bytes = Column(Integer, nullable=False)
 
+    # Perceptual hash (64-bit average-hash, hex-encoded): catches a
+    # re-saved/re-compressed/resized copy of the same image that the exact
+    # SHA-256 above would miss, since re-encoding changes every byte
+    # without changing what the image looks like. Nullable: older rows
+    # predate this field, and a file that fails to parse as an image has
+    # no perceptual hash to compute.
+    perceptual_hash = Column(String, nullable=True, index=True)
+
     declared_full_name = Column(String, nullable=True)
     declared_document_number = Column(String, nullable=True)
 
