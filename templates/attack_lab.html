@@ -63,6 +63,26 @@
 
     <div id="log-panel">Ready. Pick a scenario above — this panel shows every real request and the live decision it produced.</div>
 
+    <h2 style="margin-top:32px;">Audit Chain Integrity</h2>
+    <p class="type-tag" style="margin-bottom:14px;">
+        Every detector-result row is chained to the one before it: SHA-256 of
+        the previous row's hash combined with this row's own decision fields.
+        Verify the live chain below, then simulate someone editing a past
+        decision directly in the database — bypassing the app entirely, the
+        same way an insider with raw DB access could — and watch the chain
+        catch it.
+    </p>
+    <div class="lab-grid">
+        <button class="lab-button" onclick="checkAuditChain()">
+            VERIFY AUDIT CHAIN
+            <span class="desc">Recomputes every row's hash from genesis, live, read-only.</span>
+        </button>
+        <button class="lab-button" onclick="demoTamperAuditChain()">
+            SIMULATE TAMPERING (DEMO)
+            <span class="desc">Edits a past decision's evidence directly, then re-verifies.</span>
+        </button>
+    </div>
+
     <h2 style="margin-top:32px;">Try It Yourself</h2>
     <p class="type-tag" style="margin-bottom:14px;">
         Upload a real file — your own photo, a screenshot, anything — through the exact same
@@ -278,6 +298,42 @@
             await login({ username: u, password: 'correcthorse123', source_ip: '10.0.0.5', device_id: 'device-dubai', latitude: 25.2048, longitude: 55.2708 });
             await new Promise(r => setTimeout(r, 1500));
             await login({ username: u, password: 'correcthorse123', source_ip: '10.0.0.9', device_id: 'device-london', latitude: 51.5074, longitude: -0.1278 });
+            setButtonsDisabled(false);
+        }
+
+        async function checkAuditChain() {
+            logLine('=== VERIFY AUDIT CHAIN ===');
+            logLine('GET /api/audit-chain/status', 'request');
+            const res = await fetch('/api/audit-chain/status');
+            const data = await res.json();
+            for (const [table, status] of Object.entries(data.tables)) {
+                if (status.note) {
+                    logLine(`  ${table}: ${status.note}`);
+                } else {
+                    const line = `  ${table}: ${status.valid ? 'VALID' : 'TAMPERED'} (checked ${status.checked} rows)`
+                        + (status.valid ? '' : `  <- break at row id=${status.break_at_id}`);
+                    logLine(line, status.valid ? 'allow' : 'block');
+                }
+            }
+            logLine(`=== overall: ${data.overall_valid ? 'all chains intact' : 'TAMPERING DETECTED'} ===`, data.overall_valid ? 'allow' : 'block');
+            return data;
+        }
+
+        async function demoTamperAuditChain() {
+            setButtonsDisabled(true);
+            logLine('=== SIMULATE TAMPERING (DEMO) ===');
+            logLine('POST /api/audit-chain/demo-tamper?table=detector_results', 'request');
+            const res = await fetch('/api/audit-chain/demo-tamper?table=detector_results', { method: 'POST' });
+            if (!res.ok) {
+                const err = await res.json();
+                logLine(`  -> ${err.detail}`, 'block');
+                setButtonsDisabled(false);
+                return;
+            }
+            const data = await res.json();
+            logLine(`  -> row id=${data.tampered_row_id} in ${data.tampered_table} edited directly, bypassing the app (simulating raw DB access)`);
+            logLine('Re-checking the chain now...');
+            await checkAuditChain();
             setButtonsDisabled(false);
         }
 
