@@ -14,10 +14,13 @@ isolation (no cross-reference needed) — e.g. a document that expires
 before it was issued.
 
 WHY THESE SIGNALS, WEIGHTED THIS WAY:
-- Duplicate document_number is the strongest signal (a document number
-  should be unique to one person, full stop) — no legitimate reason two
-  "different" citizens share one.
-- Duplicate national_id is equally strong for the same reason.
+- Duplicate document_number and duplicate national_id are each weighted
+  high enough (75 pts, v0.2.0) that either alone crosses the risk
+  engine's BLOCK line (>=70) on its own, with no corroborating signal
+  required. There is no legitimate reason two different citizens share a
+  document number or a national ID — full stop — so, unlike every other
+  signal in this detector, we treat a lone match here as near-definitive
+  rather than merely strong-but-not-absolute.
 - Duplicate phone_number and duplicate registered_device_id are strong
   but not absolute (family members might share a phone temporarily;
   shared/public devices exist) — scored high but not maximal.
@@ -31,15 +34,28 @@ WHY THESE SIGNALS, WEIGHTED THIS WAY:
 This mirrors the project brief's instruction to distinguish strong,
 near-definitive evidence from weak, corroborating-only evidence, and to
 let the jury inspect exactly why an identity was flagged.
+
+REVISION NOTE (v0.2.0) — fixing a named limitation: our validation
+exposed a concrete case where a lone duplicated national document number
+reached only STEP-UP (35 pts), not BLOCK, despite the docstring's own
+claim that this signal is near-definitive. Raising
+POINTS_DUPLICATE_DOCUMENT_NUMBER and POINTS_DUPLICATE_NATIONAL_ID from 35
+to 75 each closes that gap: either alone now reaches BLOCK, matching the
+stated design intent. This does not change detection outcomes (both
+values already exceeded TRIGGER_THRESHOLD before and after), only
+decision severity — so it has no effect on the precision/recall/F1/FPR
+already measured for this detector.
 """
 
 from datetime import date
 
 DETECTOR_NAME = "synthetic_identity"
-DETECTOR_VERSION = "0.1.0"
+DETECTOR_VERSION = "0.2.0"
 
-POINTS_DUPLICATE_DOCUMENT_NUMBER = 35
-POINTS_DUPLICATE_NATIONAL_ID = 35
+# Raised from 35 to 75 in v0.2.0 — see module docstring.
+POINTS_DUPLICATE_DOCUMENT_NUMBER = 75
+POINTS_DUPLICATE_NATIONAL_ID = 75
+
 POINTS_DUPLICATE_PHONE = 25
 POINTS_DUPLICATE_DEVICE = 20
 POINTS_DUPLICATE_ADDRESS = 12
@@ -204,5 +220,17 @@ if __name__ == "__main__":
     print("\nLegitimate candidate:")
     print(json.dumps(clean_result, indent=2))
     assert clean_result["triggered"] is False
+
+    # REVISION v0.2.0: a LONE duplicated national ID, nothing else, must
+    # now reach BLOCK (>=70) on its own — this is the exact gap the fix
+    # closes (previously scored 35, stalling at STEP-UP).
+    lone_national_id_dup = {
+        "username": "citizen_d_fake", "national_id": "784-1990-1111111-1",
+        "document_number": "IDN-DIFFERENT-99", "phone_number": "+971-50-8888888",
+    }
+    lone_dup_result = analyze(lone_national_id_dup, existing_registry)
+    print("\nLone duplicate national ID only (post-fix regression check):")
+    print(json.dumps(lone_dup_result, indent=2))
+    assert lone_dup_result["score"] >= 70, "Fix regressed: lone national-ID duplicate should reach BLOCK range"
 
     print("\nAll self-tests passed.")
