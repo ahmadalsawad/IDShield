@@ -216,6 +216,12 @@ def eval_document_fraud(rng, n_legit=3000, n_attacks=200):
     tp = fp = tn = fn = 0
     prior_uploads = []
 
+    # Real-world editing software names sometimes appear legitimately —
+    # e.g. a citizen who scanned and lightly cropped/rotated their own
+    # document before uploading. A fraction of LEGITIMATE cases carry this
+    # metadata to test the weak signal doesn't cause noise on its own.
+    EDITING_TOOLS = ["Adobe Photoshop 25.0", "GIMP 2.10", "Snapseed", None, None, None, None, None]
+
     # Each event gets a timestamp; attack pairs are generated with the
     # owner's timestamp strictly before the thief's, then the WHOLE set is
     # sorted chronologically (not shuffled) before replay — preserving the
@@ -233,6 +239,7 @@ def eval_document_fraud(rng, n_legit=3000, n_attacks=200):
             "declared_full_name": registry["full_name"],
             "declared_document_number": registry["document_number"],
             "username": uname,
+            "exif_software": rng.choice(EDITING_TOOLS),
         }
         events.append((rng.uniform(0, 100000), candidate, registry, False))
 
