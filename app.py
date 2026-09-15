@@ -55,7 +55,7 @@ from models import (
 from security import hash_password, verify_password
 from detectors import credential_stuffing, impossible_travel, device_anomaly, synthetic_identity, document_fraud, liveness_check
 import risk_engine
-from audit_chain import compute_record_hash, GENESIS_HASH
+from audit_chain import compute_record_hash, verify_chain, GENESIS_HASH
 import json
 
 app = FastAPI(title="IDShield", version="0.1.0")
@@ -686,3 +686,94 @@ def api_recent_events(limit: int = 50, db: Session = Depends(get_db)):
 
     rows.sort(key=lambda r: r["timestamp"], reverse=True)
     return rows[:limit]
+
+
+# ---------------------------------------------------------------------------
+# Phase 7 (this revision): live audit-chain verification & demo
+#
+# These two endpoints make the tamper-evident hash chain (audit_chain.py,
+# see also the "Tamper-evident audit chain" paragraph in the report)
+# something a jury member can click, not just read about. /status is a
+# genuine, read-only check against whatever is really in the database
+# right now. /demo-tamper deliberately does what an insider with raw DB
+# access could otherwise do silently — edit a past decision's evidence
+# after the fact, without recomputing chain_hash — purely so that act
+# and its detection are both visible live. It would not exist in a real
+# deployment; it exists here so this claim is checkable, not asserted.
+# ---------------------------------------------------------------------------
+
+CHAINED_MODELS = {
+    "detector_results": DetectorResult,
+    "identity_detector_results": IdentityDetectorResult,
+    "document_detector_results": DocumentDetectorResult,
+    "liveness_detector_results": LivenessDetectorResult,
+}
+
+
+@app.get("/api/audit-chain/status")
+def audit_chain_status(db: Session = Depends(get_db)):
+    """Recomputes every chained row's hash from genesis forward, for all
+    four result tables, using whatever is actually in the database at
+    the moment this is called. Never writes anything."""
+    tables_status = {}
+    overall_valid = True
+
+    for table_name, model_class in CHAINED_MODELS.items():
+        rows = db.query(model_class).order_by(model_class.id.asc()).all()
+        row_dicts = [{
+            "id": r.id,
+            "detector_name": r.detector_name,
+            "detector_version": r.detector_version,
+            "triggered": r.triggered,
+            "score": r.score,
+            "confidence": r.confidence,
+            "evidence_json": r.evidence_json,
+            "chain_hash": r.chain_hash,
+        } for r in rows]
+
+        # Rows written before this revision have chain_hash=NULL and
+        # aren't part of the chain — verify only from the first row that
+        # actually has one.
+        first_chained = next((i for i, row in enumerate(row_dicts) if row["chain_hash"]), None)
+        if first_chained is None:
+            tables_status[table_name] = {"valid": True, "checked": 0, "break_at_id": None, "note": "no chained rows yet"}
+            continue
+
+        result = verify_chain(row_dicts[first_chained:])
+        tables_status[table_name] = {
+            "valid": result["valid"],
+            "checked": result["checked"],
+            "break_at_id": result["break_at_id"],
+            "note": None,
+        }
+        overall_valid = overall_valid and result["valid"]
+
+    return {"overall_valid": overall_valid, "tables": tables_status}
+
+
+@app.post("/api/audit-chain/demo-tamper")
+def audit_chain_demo_tamper(table: str = "detector_results", db: Session = Depends(get_db)):
+    """DEMO-ONLY: edits the most recent row in the given table's
+    evidence_json directly, deliberately WITHOUT recomputing chain_hash —
+    exactly what an insider with raw DB access, and no knowledge of the
+    chain, could otherwise do silently. Call /api/audit-chain/status
+    right after this to watch it get caught."""
+    if table not in CHAINED_MODELS:
+        raise HTTPException(status_code=400, detail=f"Unknown table: {table}. Choose one of {list(CHAINED_MODELS)}")
+    model_class = CHAINED_MODELS[table]
+
+    row = db.query(model_class).order_by(model_class.id.desc()).first()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"No rows in {table} yet — run an Attack Lab scenario first")
+
+    original_evidence = json.loads(row.evidence_json)
+    tampered_evidence = [{"label": "DEMO: this evidence was quietly edited after the fact", "value": None, "contribution": 0}]
+    row.evidence_json = json.dumps(tampered_evidence)
+    db.commit()
+
+    return {
+        "tampered_table": table,
+        "tampered_row_id": row.id,
+        "original_evidence": original_evidence,
+        "new_evidence": tampered_evidence,
+    }
