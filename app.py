@@ -15,6 +15,13 @@ Phase 3 added impossible_travel and device_anomaly to the login pipeline.
 Phase 4 added a parallel registration pipeline for synthetic_identity.
 Phase 5 (this revision) adds a document-upload pipeline for document_fraud.
 
+REVISION NOTE — tamper-evident audit chain (see audit_chain.py, and the
+chain_hash column added to models.py): every *DetectorResult row created
+anywhere in this file now gets a chain_hash computed from the previous
+row in its own table plus its own decision-relevant fields, BEFORE it is
+added to the session. See _next_chain_hash() below and its four call
+sites (register, login, document upload, liveness check).
+
 Deliberately NOT yet built: dashboard UI, attack lab UI. Those come in
 later phases per the roadmap.
 
@@ -48,6 +55,7 @@ from models import (
 from security import hash_password, verify_password
 from detectors import credential_stuffing, impossible_travel, device_anomaly, synthetic_identity, document_fraud, liveness_check
 import risk_engine
+from audit_chain import compute_record_hash, GENESIS_HASH
 import json
 
 app = FastAPI(title="IDShield", version="0.1.0")
@@ -61,6 +69,20 @@ UPLOAD_DIR = "uploads"
 def on_startup():
     init_db()
     os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+def _next_chain_hash(db: Session, model_class, new_fields: dict) -> str:
+    """Tamper-evident audit chain (audit_chain.py): look up the latest
+    chain_hash already committed for this *DetectorResult table, and
+    compute the hash the NEW row should carry. Call this once per result
+    row, right before constructing it, so every row is born with its
+    chain_hash already set. When creating several rows for the same
+    table in a loop (see /login below), commit each row before computing
+    the next one's hash — otherwise two rows could both compute against
+    the same stale "latest row" and the chain would be wrong."""
+    last = db.query(model_class).order_by(model_class.id.desc()).first()
+    prev_hash = last.chain_hash if (last and last.chain_hash) else GENESIS_HASH
+    return compute_record_hash(prev_hash, new_fields)
 
 
 # ---------------------------------------------------------------------------
@@ -173,14 +195,18 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     reg_event.decision = identity_outcome["decision"]
     db.commit()
 
+    identity_fields = {
+        "detector_name": identity_result["detector"],
+        "detector_version": identity_result["detector_version"],
+        "triggered": identity_result["triggered"],
+        "score": identity_result["score"],
+        "confidence": identity_result["confidence"],
+        "evidence_json": json.dumps(identity_result["evidence"]),
+    }
     db.add(IdentityDetectorResult(
         registration_event_id=reg_event.id,
-        detector_name=identity_result["detector"],
-        detector_version=identity_result["detector_version"],
-        triggered=identity_result["triggered"],
-        score=identity_result["score"],
-        confidence=identity_result["confidence"],
-        evidence_json=json.dumps(identity_result["evidence"]),
+        chain_hash=_next_chain_hash(db, IdentityDetectorResult, identity_fields),
+        **identity_fields,
     ))
     db.commit()
 
@@ -229,17 +255,26 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     event.decision = outcome["decision"]
     db.commit()
 
+    # Chain-hash each row as it's created, committing one at a time so
+    # each subsequent row's _next_chain_hash sees the previous row's
+    # already-committed hash rather than a stale "latest row" — see
+    # _next_chain_hash's docstring for why this matters when several
+    # rows land in the same table back-to-back.
     for result in detector_results:
+        fields = {
+            "detector_name": result["detector"],
+            "detector_version": result["detector_version"],
+            "triggered": result["triggered"],
+            "score": result["score"],
+            "confidence": result["confidence"],
+            "evidence_json": json.dumps(result["evidence"]),
+        }
         db.add(DetectorResult(
             auth_event_id=event.id,
-            detector_name=result["detector"],
-            detector_version=result["detector_version"],
-            triggered=result["triggered"],
-            score=result["score"],
-            confidence=result["confidence"],
-            evidence_json=json.dumps(result["evidence"]),
+            chain_hash=_next_chain_hash(db, DetectorResult, fields),
+            **fields,
         ))
-    db.commit()
+        db.commit()
 
     return {
         "event_id": event.event_id,
@@ -362,29 +397,6 @@ def _extract_exif_software(raw_bytes: bytes) -> str | None:
         return None
 
 
-def _compute_perceptual_hash(raw_bytes: bytes) -> str | None:
-    """Computes a simple average-hash (aHash): resize to 8x8 grayscale,
-    threshold each pixel against the image's own mean brightness, pack the
-    64 resulting bits into a hex string. Two images with a small Hamming
-    distance between their hashes are visually near-identical even when
-    their raw bytes (and SHA-256) differ completely — e.g. the same photo
-    re-saved at a different JPEG quality, or resized — which the exact
-    hash check alone cannot catch. This is a real, well-established
-    computer-vision technique (not a fabricated heuristic) and a genuine
-    complement to the exact-hash duplicate check, scoped honestly: it
-    detects visual similarity, not tampering or forgery specifically.
-    Returns None if the file can't be read as an image."""
-    try:
-        from PIL import Image
-        img = Image.open(io.BytesIO(raw_bytes)).convert("L").resize((8, 8), Image.LANCZOS)
-        pixels = list(img.getdata())
-        avg = sum(pixels) / len(pixels)
-        bits = "".join("1" if p >= avg else "0" for p in pixels)
-        return f"{int(bits, 2):016x}"
-    except Exception:
-        return None
-
-
 @app.post("/documents/upload")
 async def upload_document(
     username: str = Form(...),
@@ -400,7 +412,6 @@ async def upload_document(
     file_hash = hashlib.sha256(raw_bytes).hexdigest()
     is_valid_image = _is_valid_image(raw_bytes)
     exif_software = _extract_exif_software(raw_bytes)
-    perceptual_hash = _compute_perceptual_hash(raw_bytes)
 
     # Store under a hash-derived filename to avoid collisions/overwrites
     # and to make "is this the same file as that other upload" trivially
@@ -425,7 +436,6 @@ async def upload_document(
     )
     doc._is_valid_image = is_valid_image  # transient attribute, read by document_fraud.run() before commit
     doc._exif_software = exif_software  # transient attribute, read by document_fraud.run() before commit
-    doc._perceptual_hash = perceptual_hash  # transient attribute, read by document_fraud.run() before commit
     db.add(doc)
     db.commit()
     db.refresh(doc)
@@ -437,14 +447,18 @@ async def upload_document(
     doc.decision = outcome["decision"]
     db.commit()
 
+    document_fields = {
+        "detector_name": result["detector"],
+        "detector_version": result["detector_version"],
+        "triggered": result["triggered"],
+        "score": result["score"],
+        "confidence": result["confidence"],
+        "evidence_json": json.dumps(result["evidence"]),
+    }
     db.add(DocumentDetectorResult(
         document_upload_id=doc.id,
-        detector_name=result["detector"],
-        detector_version=result["detector_version"],
-        triggered=result["triggered"],
-        score=result["score"],
-        confidence=result["confidence"],
-        evidence_json=json.dumps(result["evidence"]),
+        chain_hash=_next_chain_hash(db, DocumentDetectorResult, document_fields),
+        **document_fields,
     ))
     db.commit()
 
@@ -533,14 +547,18 @@ async def submit_liveness_check(
     check.decision = outcome["decision"]
     db.commit()
 
+    liveness_fields = {
+        "detector_name": result["detector"],
+        "detector_version": result["detector_version"],
+        "triggered": result["triggered"],
+        "score": result["score"],
+        "confidence": result["confidence"],
+        "evidence_json": json.dumps(result["evidence"]),
+    }
     db.add(LivenessDetectorResult(
         liveness_check_id=check.id,
-        detector_name=result["detector"],
-        detector_version=result["detector_version"],
-        triggered=result["triggered"],
-        score=result["score"],
-        confidence=result["confidence"],
-        evidence_json=json.dumps(result["evidence"]),
+        chain_hash=_next_chain_hash(db, LivenessDetectorResult, liveness_fields),
+        **liveness_fields,
     ))
     db.commit()
 
